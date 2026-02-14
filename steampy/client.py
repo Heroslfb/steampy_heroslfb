@@ -191,9 +191,9 @@ class SteamClient:
     def get_trade_offers(
             self,
             merge: bool = True,
-            use_webtoken: bool = False,
-            active_only: int = 1,
-            historical_only: int = 0,
+            use_webtoken: bool = True,
+            active_only: bool = True,
+            historical_only: bool = False,
             time_historical_cutoff: str = ''
     ) -> dict:
         params = {
@@ -202,8 +202,8 @@ class SteamClient:
             'get_received_offers': 1,
             'get_descriptions': 1,
             'language': 'english',
-            'active_only': active_only,
-            'historical_only': historical_only,
+            'active_only': 1 if active_only else 0,
+            'historical_only': 1 if historical_only else 0,
             'time_historical_cutoff': time_historical_cutoff,
         }
         response = self.api_call('GET', 'IEconService', 'GetTradeOffers', 'v1', params).json()
@@ -225,7 +225,7 @@ class SteamClient:
 
         return offers_response
 
-    def get_trade_offer(self, trade_offer_id: str, merge: bool = True, use_webtoken: bool = False) -> dict:
+    def get_trade_offer(self, trade_offer_id: str, merge: bool = True, use_webtoken: bool = True) -> dict:
         params = {
             'key'if not use_webtoken else 'access_token': self._api_key if not use_webtoken else self._access_token,
             'tradeofferid': trade_offer_id, 'language': 'english'
