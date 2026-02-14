@@ -89,7 +89,6 @@ class SteamClient:
             raise ValueError('Access token not found in steamLoginSecure cookie')
 
         access_token = access_token_parts[1]
-        # print(f'access token: {access_token}')
         self._access_token = access_token
 
     @login_required
@@ -123,8 +122,6 @@ class SteamClient:
         LoginExecutor(self.username, self._password, self.steam_guard['shared_secret'], self._session).login()
         self.was_login_executed = True
         self.market._set_login_executed(self.steam_guard, self._get_session_id())
-
-
 
     @login_required
     def logout(self) -> None:
@@ -191,7 +188,14 @@ class SteamClient:
         params = {'key': self._api_key}
         return self.api_call('GET', 'IEconService', 'GetTradeOffersSummary', 'v1', params).json()
 
-    def get_trade_offers(self, merge: bool = True, use_webtoken=False, active_only=1, historical_only=0, time_historical_cutoff='') -> dict:
+    def get_trade_offers(
+            self,
+            merge: bool = True,
+            use_webtoken: bool = False,
+            active_only: int = 1,
+            historical_only: int = 0,
+            time_historical_cutoff: str = ''
+    ) -> dict:
         params = {
             'key'if not use_webtoken else 'access_token': self._api_key if not use_webtoken else self._access_token,
             'get_sent_offers': 1,
@@ -221,7 +225,7 @@ class SteamClient:
 
         return offers_response
 
-    def get_trade_offer(self, trade_offer_id: str, merge: bool = True, use_webtoken=False) -> dict:
+    def get_trade_offer(self, trade_offer_id: str, merge: bool = True, use_webtoken: bool = False) -> dict:
         params = {
             'key'if not use_webtoken else 'access_token': self._api_key if not use_webtoken else self._access_token,
             'tradeofferid': trade_offer_id, 'language': 'english'
@@ -268,7 +272,6 @@ class SteamClient:
     def accept_trade_offer(self, trade_offer_id: str) -> dict:
         trade = self.get_trade_offer(trade_offer_id, use_webtoken=True)
         trade_offer_state = TradeOfferState(trade['response']['offer']['trade_offer_state'])
-        # print(trade_offer_state, trade_offer_id)
         if trade_offer_state is not TradeOfferState.Active:
             raise ApiException(f'Invalid trade offer state: {trade_offer_state.name} ({trade_offer_state.value})')
 
