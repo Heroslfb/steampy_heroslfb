@@ -1,4 +1,6 @@
 import json
+import time
+import random
 import urllib.parse
 from decimal import Decimal
 from http import HTTPStatus
@@ -60,11 +62,10 @@ class SteamMarket:
 
     @login_required
     def get_my_market_listings(self) -> dict:
-        response = self._session.get(f'{SteamUrl.COMMUNITY_URL}/market')
+        response = self._session.get(f'{SteamUrl.COMMUNITY_URL}/market/?count=100')
         if response.status_code != HTTPStatus.OK:
             raise ApiException(f'There was a problem getting the listings. HTTP code: {response.status_code}')
-
-        assets_descriptions = json.loads(text_between(response.text, 'var g_rgAssets = ', ';\r\n'))
+        assets_descriptions = json.loads(text_between(response.text, "var g_rgAssets = ", ";\n"))
         listing_id_to_assets_address = get_listing_id_to_assets_address_from_html(response.text)
         listings = get_market_listings_from_html(response.text)
         listings = merge_items_with_descriptions_from_listing(
@@ -80,7 +81,7 @@ class SteamMarket:
             )
 
             if n_showing < n_total < 1000:
-                url = f'{SteamUrl.COMMUNITY_URL}/market/mylistings/render/?query=&start={n_showing}&count={-1}'
+                url = f'{SteamUrl.COMMUNITY_URL}/market/mylistings/render/?query=&start={0}&count={-1}'
                 response = self._session.get(url)
                 if response.status_code != HTTPStatus.OK:
                     raise ApiException(f'There was a problem getting the listings. HTTP code: {response.status_code}')
@@ -111,7 +112,7 @@ class SteamMarket:
         return listings
 
     @login_required
-    def create_sell_order(self, assetid: str, game: GameOptions, money_to_receive: str) -> dict:
+    def create_sell_order(self, assetid: str, game: GameOptions, money_to_receive: str, confirm_trade: bool = True) -> dict:
         data = {
             'assetid': assetid,
             'sessionid': self._session_id,
@@ -124,7 +125,8 @@ class SteamMarket:
 
         response = self._session.post(f'{SteamUrl.COMMUNITY_URL}/market/sellitem/', data, headers=headers).json()
         has_pending_confirmation = 'pending confirmation' in response.get('message', '')
-        if response.get('needs_mobile_confirmation') or (not response.get('success') and has_pending_confirmation):
+        if confirm_trade and response.get('needs_mobile_confirmation') or (
+                not response.get('success') and has_pending_confirmation):
             return self._confirm_sell_listing(assetid)
 
         return response
@@ -150,14 +152,53 @@ class SteamMarket:
             'Referer': f'{SteamUrl.COMMUNITY_URL}/market/listings/{game.app_id}/{urllib.parse.quote(market_name)}'
         }
 
-        response = self._session.post(f'{SteamUrl.COMMUNITY_URL}/market/createbuyorder/', data, headers=headers).json()
+        response = self._session.post(f'{SteamUrl.COMMUNITY_URL}/market/createbuyorder/', data, headers=headers, timeout=30)
+        response = response.json()
 
-        if (success := response.get('success')) != 1:
-            raise ApiException(
-                f'There was a problem creating the order. Are you using the right currency? success: {success}'
+        # If the order is successful, return immediately
+        if response.get("success") == 1:
+            return response
+
+        # If mobile confirmation is required
+        if response.get("need_confirmation"):
+            if not self._steam_guard:
+                raise ApiException("Order requires mobile confirmation, but steam_guard info is not provided")
+
+            confirmation_id = response["confirmation"]["confirmation_id"]
+            # print("Confirmation required, ID:", confirmation_id)
+
+            # Execute mobile confirmation
+            confirmation_executor = ConfirmationExecutor(
+                self._steam_guard['identity_secret'],
+                self._steam_guard['steamid'],
+                self._session
             )
+            time.sleep(random.uniform(2, 4))
+            success = confirmation_executor.confirm_by_id(confirmation_id)
+            if not success:
+                raise ApiException("Mobile confirmation failed")
 
-        return response
+            # print("Mobile confirmation succeeded, resending request with confirmation ID")
+
+            # Second request, update confirmation to the confirmed ID
+            data["confirmation"] = confirmation_id
+            time.sleep(random.uniform(2, 4))
+            response = self._session.post(
+                SteamUrl.COMMUNITY_URL + "/market/createbuyorder/",
+                data,
+                headers=headers
+            ).json()
+            # print("Second order response:", response)
+
+            if response.get("success") == 1:
+                # print("Buy order effective")
+                return response
+            else:
+                raise ApiException(f"Order failed after confirmation: {response}")
+
+        # Other exceptions
+        raise ApiException(f"Buy order failed: {response}")
+
 
     @login_required
     def buy_item(
@@ -217,6 +258,8 @@ class SteamMarket:
 
     def _confirm_sell_listing(self, asset_id: str) -> dict:
         con_executor = ConfirmationExecutor(
-            self._steam_guard['identity_secret'], self._steam_guard['steamid'], self._session
+            self._steam_guard['identity_secret'],
+            self._steam_guard['steamid'],
+            self._session
         )
         return con_executor.confirm_sell_listing(asset_id)

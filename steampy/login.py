@@ -3,6 +3,7 @@ from base64 import b64encode
 
 from rsa import encrypt, PublicKey
 from requests import Session, Response
+from urllib.parse import unquote
 
 from steampy import guard
 from steampy.models import SteamUrl
@@ -40,6 +41,17 @@ class LoginExecutor:
         self._perform_redirects(finalized_response.json())
         self.set_sessionid_cookies()
         return self.session
+
+        steam_login_secure_cookies = [cookie for cookie in self._session.cookies if cookie.name == 'steamLoginSecure']
+        cookie_value = steam_login_secure_cookies[0].value
+        decoded_cookie_value = unquote(cookie_value)
+        access_token_parts = decoded_cookie_value.split('||')
+        if len(access_token_parts) < 2:
+            print(decoded_cookie_value)
+            raise ValueError('Access token not found in steamLoginSecure cookie')
+
+        access_token = access_token_parts[1]
+        self._access_token = access_token
 
     def _send_login_request(self) -> Response:
         rsa_params = self._fetch_rsa_params()
@@ -137,5 +149,6 @@ class LoginExecutor:
         sessionid = self.session.cookies['sessionid']
         redir = f'{SteamUrl.COMMUNITY_URL}/login/home/?goto='
         finalized_data = {'nonce': self.refresh_token, 'sessionid': sessionid, 'redir': redir}
-        response = self.session.post(SteamUrl.LOGIN_URL + '/jwt/finalizelogin', data=finalized_data)
+        headers = {'Referer': f'{SteamUrl.COMMUNITY_URL}/', 'Origin': SteamUrl.COMMUNITY_URL}
+        response = self.session.post(SteamUrl.LOGIN_URL + '/jwt/finalizelogin', data=finalized_data, headers=headers)
         return response
