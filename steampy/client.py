@@ -4,6 +4,7 @@ import json
 import urllib.parse as urlparse
 from typing import List, Union
 from decimal import Decimal
+from urllib.parse import unquote
 
 import requests
 
@@ -61,8 +62,8 @@ class SteamClient:
     def set_proxies(self, proxies: dict) -> dict:
         if not isinstance(proxies, dict):
             raise TypeError(
-                'Proxy must be a dict. Example: '
-                '\{"http": "http://login:password@host:port"\, "https": "http://login:password@host:port"\}'
+                r'Proxy must be a dict. Example: '
+                r'\{"http": "http://login:password@host:port"\, "https": "http://login:password@host:port"\}'
             )
 
         if ping_proxy(proxies):
@@ -78,6 +79,18 @@ class SteamClient:
             self.steam_guard = {'steamid': str(self.get_steam_id())}
 
         self.market._set_login_executed(self.steam_guard, self._get_session_id())
+
+        steam_login_secure_cookies = [cookie for cookie in self._session.cookies if cookie.name == 'steamLoginSecure']
+        cookie_value = steam_login_secure_cookies[0].value
+        decoded_cookie_value = unquote(cookie_value)
+        access_token_parts = decoded_cookie_value.split('||')
+        if len(access_token_parts) < 2:
+            print(decoded_cookie_value)
+            raise ValueError('Access token not found in steamLoginSecure cookie')
+
+        access_token = access_token_parts[1]
+        # print(f'access token: {access_token}')
+        self._access_token = access_token
 
     @login_required
     def get_steam_id(self) -> int:
@@ -110,6 +123,8 @@ class SteamClient:
         LoginExecutor(self.username, self._password, self.steam_guard['shared_secret'], self._session).login()
         self.was_login_executed = True
         self.market._set_login_executed(self.steam_guard, self._get_session_id())
+
+
 
     @login_required
     def logout(self) -> None:
@@ -152,18 +167,18 @@ class SteamClient:
         return msg in response.text
 
     @login_required
-    def get_my_inventory(self, game: GameOptions, merge: bool = True, count: int = 5000) -> dict:
+    def get_my_inventory(self, game: GameOptions, merge: bool = True, count: int = 1000) -> dict:
         steam_id = self.steam_guard['steamid']
         return self.get_partner_inventory(steam_id, game, merge, count)
 
     @login_required
     def get_partner_inventory(
-        self, partner_steam_id: str, game: GameOptions, merge: bool = True, count: int = 5000
+        self, partner_steam_id: str, game: GameOptions, merge: bool = True, count: int = 1000
     ) -> dict:
         url = '/'.join((SteamUrl.COMMUNITY_URL, 'inventory', partner_steam_id, game.app_id, game.context_id))
         params = {'l': 'english', 'count': count}
-
-        response_dict = self._session.get(url, params=params).json()
+        response = (self._session.get(url, params=params))
+        response_dict = response.json()
         if response_dict is None or response_dict.get('success') != 1:
             raise ApiException('Success value should be 1.')
 
@@ -176,16 +191,16 @@ class SteamClient:
         params = {'key': self._api_key}
         return self.api_call('GET', 'IEconService', 'GetTradeOffersSummary', 'v1', params).json()
 
-    def get_trade_offers(self, merge: bool = True) -> dict:
+    def get_trade_offers(self, merge: bool = True, use_webtoken=False, active_only=1, historical_only=0, time_historical_cutoff='') -> dict:
         params = {
-            'key': self._api_key,
+            'key'if not use_webtoken else 'access_token': self._api_key if not use_webtoken else self._access_token,
             'get_sent_offers': 1,
             'get_received_offers': 1,
             'get_descriptions': 1,
             'language': 'english',
-            'active_only': 1,
-            'historical_only': 0,
-            'time_historical_cutoff': '',
+            'active_only': active_only,
+            'historical_only': historical_only,
+            'time_historical_cutoff': time_historical_cutoff,
         }
         response = self.api_call('GET', 'IEconService', 'GetTradeOffers', 'v1', params).json()
         response = self._filter_non_active_offers(response)
@@ -206,8 +221,11 @@ class SteamClient:
 
         return offers_response
 
-    def get_trade_offer(self, trade_offer_id: str, merge: bool = True) -> dict:
-        params = {'key': self._api_key, 'tradeofferid': trade_offer_id, 'language': 'english'}
+    def get_trade_offer(self, trade_offer_id: str, merge: bool = True, use_webtoken=False) -> dict:
+        params = {
+            'key'if not use_webtoken else 'access_token': self._api_key if not use_webtoken else self._access_token,
+            'tradeofferid': trade_offer_id, 'language': 'english'
+        }
         response = self.api_call('GET', 'IEconService', 'GetTradeOffer', 'v1', params).json()
 
         if merge and 'descriptions' in response['response']:
@@ -248,8 +266,9 @@ class SteamClient:
 
     @login_required
     def accept_trade_offer(self, trade_offer_id: str) -> dict:
-        trade = self.get_trade_offer(trade_offer_id)
+        trade = self.get_trade_offer(trade_offer_id, use_webtoken=True)
         trade_offer_state = TradeOfferState(trade['response']['offer']['trade_offer_state'])
+        # print(trade_offer_state, trade_offer_id)
         if trade_offer_state is not TradeOfferState.Active:
             raise ApiException(f'Invalid trade offer state: {trade_offer_state.name} ({trade_offer_state.value})')
 
@@ -264,7 +283,6 @@ class SteamClient:
             'captcha': '',
         }
         headers = {'Referer': self._get_trade_offer_url(trade_offer_id)}
-
         response = self._session.post(accept_url, data=params, headers=headers).json()
         if response.get('needs_mobile_confirmation', False):
             return self._confirm_transaction(trade_offer_id)
@@ -391,8 +409,8 @@ class SteamClient:
             'Referer': f'{SteamUrl.COMMUNITY_URL}{urlparse.urlparse(trade_offer_url).path}',
             'Origin': SteamUrl.COMMUNITY_URL,
         }
-
         response = self._session.post(url, data=params, headers=headers).json()
+
         if confirm_trade and response.get('needs_mobile_confirmation'):
             response.update(self._confirm_transaction(response['tradeofferid']))
 
@@ -404,7 +422,12 @@ class SteamClient:
 
     @login_required
     # If convert_to_decimal = False, the price will be returned WITHOUT a decimal point.
-    def get_wallet_balance(self, convert_to_decimal: bool = True, on_hold: bool = False) -> Union[str, Decimal]:
+    def get_wallet_balance(
+            self,
+            convert_to_decimal: bool = True,
+            on_hold: bool = False,
+            return_full : bool = False
+    ) -> Union[str, Decimal, dict]:
         response = self._session.get(f'{SteamUrl.COMMUNITY_URL}/market')
         wallet_info_match = re.search(r'var g_rgWalletInfo = (.*?);', response.text)
         if wallet_info_match:
@@ -413,6 +436,8 @@ class SteamClient:
         else:
             raise Exception('Unable to get wallet balance string match')
         balance_dict_key = 'wallet_delayed_balance' if on_hold else 'wallet_balance'
+        if return_full:
+            return balance_dict
         if convert_to_decimal:
             return Decimal(balance_dict[balance_dict_key]) / 100
         else:
