@@ -167,22 +167,22 @@ def get_market_listings_from_html(html: str) -> dict:
     buy_orders_dict = {}
 
     for node in nodes:
-        if 'My sell listings' in node.text:
+        if 'My sell listings' in node.text or 'Мои лоты на продажу' in node.text:
             sell_listings_active = get_sell_listings_from_node(node)
             sell_listings_dict.update(sell_listings_active)
-        elif 'My listings awaiting confirmation' in node.text:
+        elif 'My listings awaiting confirmation' in node.text or 'Лоты, ожидающие подтверждения' in node.text:
             sell_listings_awaiting_conf = get_sell_listings_from_node(node)
             for listing in sell_listings_awaiting_conf.values():
                 listing['need_confirmation'] = True
             sell_listings_dict.update(sell_listings_awaiting_conf)
-        elif 'My buy orders' in node.text:
+        elif 'My buy orders' in node.text or 'Мои запросы на покупку' in node.text:
             buy_orders_dict = get_buy_orders_from_node(node)
 
     return {'buy_orders': buy_orders_dict, 'sell_listings': sell_listings_dict}
 
 
 def get_sell_listings_from_node(node: Tag) -> dict:
-    sell_listings_raw = node.findAll('div', {'id': re.compile('mylisting_\d+')})
+    sell_listings_raw = node.findAll('div', {'id': re.compile(r'mylisting_\d+')})
     sell_listings_dict = {}
 
     for listing_raw in sell_listings_raw:
@@ -216,7 +216,6 @@ def get_buy_orders_from_node(node: Tag) -> dict:
             'quantity': int(qnt_price_raw[0].strip()),
             'price': qnt_price_raw[1].strip(),
             'item_name': order.a.text,
-            'icon_url': order.select('img[class=market_listing_item_img]')[0].attrs['src'].rsplit('/', 2)[-2],
             'game_name': order.select('span[class=market_listing_game_name]')[0].text,
         }
         buy_orders_dict[order['order_id']] = order
@@ -226,7 +225,7 @@ def get_buy_orders_from_node(node: Tag) -> dict:
 
 def get_listing_id_to_assets_address_from_html(html: str) -> dict:
     listing_id_to_assets_address = {}
-    regex = "CreateItemHoverFromContainer\( [\w]+, 'mylisting_([\d]+)_[\w]+', ([\d]+), '([\d]+)', '([\d]+)', [\d]+ \);"
+    regex = r"CreateItemHoverFromContainer\( [\w]+, 'mylisting_([\d]+)_[\w]+', ([\d]+), '([\d]+)', '([\d]+)', [\d]+ \);"
 
     for match in re.findall(regex, html):
         listing_id_to_assets_address[match[0]] = [str(match[1]), match[2], match[3]]
