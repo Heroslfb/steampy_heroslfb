@@ -177,7 +177,7 @@ class SteamClient:
         response = (self._session.get(url, params=params))
         response_dict = response.json()
         if response_dict is None or response_dict.get('success') != 1:
-            raise ApiException('Success value should be 1.')
+            raise ApiException(f'Success value should be 1. response: {response_dict}')
 
         return merge_items_with_descriptions_from_inventory(response_dict, game) if merge else response_dict
 
@@ -207,7 +207,8 @@ class SteamClient:
             'time_historical_cutoff': time_historical_cutoff,
         }
         response = self.api_call('GET', 'IEconService', 'GetTradeOffers', 'v1', params).json()
-        response = self._filter_non_active_offers(response)
+        if active_only:
+            response = self._filter_non_active_offers(response)
 
         return merge_items_with_descriptions_from_offers(response) if merge else response
 
@@ -217,10 +218,12 @@ class SteamClient:
         offers_sent = offers_response['response'].get('trade_offers_sent', [])
 
         offers_response['response']['trade_offers_received'] = list(
-            filter(lambda offer: offer['trade_offer_state'] == TradeOfferState.Active, offers_received)
+            filter(lambda offer: offer['trade_offer_state'] in [
+                TradeOfferState.Active, TradeOfferState.ConfirmationNeed], offers_received)
         )
         offers_response['response']['trade_offers_sent'] = list(
-            filter(lambda offer: offer['trade_offer_state'] == TradeOfferState.Active, offers_sent)
+            filter(lambda offer: offer['trade_offer_state'] in [
+                TradeOfferState.Active, TradeOfferState.ConfirmationNeed], offers_sent)
         )
 
         return offers_response
